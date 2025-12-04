@@ -5,9 +5,10 @@ const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID!;
 const TABLE_REPORTES =
   process.env.AIRTABLE_TABLE_REPORTES || "Reportes Diarios";
 
-// Nombres EXACTOS de campos en tu tabla "Reportes Diarios"
+// Nombres EXACTOS de campos en "Reportes Diarios"
 const FIELD_FECHA = "Fecha";
-const FIELD_SUPERVISOR_LINK = "Supervisores"; // link a tabla Supervisores
+const FIELD_SUPERVISOR_LINK = "Supervisores"; // link a Supervisores
+const FIELD_PROYECTO_LINK = "Proyecto";       // link a Proyectos
 const FIELD_CONFIRMADO = "Confirmado por supervisor";
 
 const FIELD_FABRICACION = "Fabricación – actividades";
@@ -36,7 +37,7 @@ type ReportePayload = {
   pendiente?: string;
   pendienteOtro?: string;
   supervisorId: string | null;
-  proyectoId?: string | null; // el backend ya no lo usa, pero no estorba
+  proyectoId?: string | null;
 };
 
 /* ------------------ POST: crear reporte ------------------ */
@@ -92,6 +93,10 @@ export async function POST(req: Request) {
       [FIELD_SUPERVISOR_LINK]: [body.supervisorId],
       [FIELD_CONFIRMADO]: true,
     };
+
+    if (body.proyectoId) {
+      fields[FIELD_PROYECTO_LINK] = [body.proyectoId];
+    }
 
     if (fabricacionSel.length) {
       fields[FIELD_FABRICACION] = fabricacionSel;
@@ -200,6 +205,7 @@ export async function GET(req: Request) {
       id: r.id,
       fecha: r.fields[FIELD_FECHA] || null,
       supervisores: r.fields[FIELD_SUPERVISOR_LINK] || [],
+      proyectos: r.fields[FIELD_PROYECTO_LINK] || [], // por si luego quieres usarlo
       confirmado: !!r.fields[FIELD_CONFIRMADO],
       fabricacion: r.fields[FIELD_FABRICACION] || [],
       instalacion: r.fields[FIELD_INSTALACION] || [],
@@ -212,7 +218,7 @@ export async function GET(req: Request) {
       tiempoMuertoOtro: r.fields[FIELD_TIEMPO_MUERTO_OTRO] || null,
       pendiente: r.fields[FIELD_PENDIENTE] || null,
       pendienteOtro: r.fields[FIELD_PENDIENTE_OTRO] || null,
-      rawFields: r.fields, // por si luego quieres usar algo extra en el front
+      rawFields: r.fields,
     }));
 
     return NextResponse.json({ ok: true, records });

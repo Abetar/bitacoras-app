@@ -6,8 +6,11 @@ import { useSearchParams, useRouter } from "next/navigation";
 type SupervisorInfo = {
   supervisorId: string;
   supervisorName: string;
-  proyectoId: string | null;
-  proyectoNombre: string | null;
+};
+
+type ProyectoItem = {
+  id: string;
+  nombre: string;
 };
 
 export default function SupervisorClient() {
@@ -16,6 +19,9 @@ export default function SupervisorClient() {
 
   const [info, setInfo] = useState<SupervisorInfo | null>(null);
   const [loadingInfo, setLoadingInfo] = useState(true);
+
+  const [proyectos, setProyectos] = useState<ProyectoItem[]>([]);
+  const [proyectoSeleccionado, setProyectoSeleccionado] = useState<string>("");
 
   // Campos del formulario
   const [fecha, setFecha] = useState("");
@@ -44,7 +50,7 @@ export default function SupervisorClient() {
 
   const supervisorId = searchParams.get("user");
 
-  // Helpers para mostrar toasts
+  // Helpers para toasts
   const showErrorToast = (errors: string[]) => {
     setSuccessMessage(null);
     setFormErrors(errors);
@@ -91,11 +97,17 @@ export default function SupervisorClient() {
         }
 
         setInfo({
-          supervisorId,
+          supervisorId: data.supervisorId,
           supervisorName: data.supervisorName || "",
-          proyectoId: data.proyectoId || null,
-          proyectoNombre: data.proyectoNombre || null,
         });
+
+        const listaProyectos: ProyectoItem[] = data.proyectos || [];
+        setProyectos(listaProyectos);
+
+        // Si solo tiene un proyecto asignado, lo preseleccionamos
+        if (listaProyectos.length === 1) {
+          setProyectoSeleccionado(listaProyectos[0].id);
+        }
       } catch {
         router.replace("/");
       } finally {
@@ -145,6 +157,10 @@ export default function SupervisorClient() {
       errors.push("Selecciona al menos una actividad del día.");
     }
 
+    if (proyectos.length > 0 && !proyectoSeleccionado) {
+      errors.push("Selecciona el proyecto del día.");
+    }
+
     if (!confirmado) {
       errors.push("Debes confirmar que la información es real y verificable.");
     }
@@ -177,7 +193,7 @@ export default function SupervisorClient() {
           pendiente,
           pendienteOtro,
           supervisorId: info?.supervisorId || null,
-          proyectoId: info?.proyectoId || null, // el backend lo ignora, no pasa nada
+          proyectoId: proyectos.length > 0 ? proyectoSeleccionado : null,
         }),
       });
 
@@ -191,7 +207,7 @@ export default function SupervisorClient() {
         return;
       }
 
-      // Éxito: reseteamos el formulario a estado limpio
+      // Éxito: dejamos seleccionado el proyecto (para el siguiente día)
       setFecha("");
       setActividades([]);
       setM2Instalados("");
@@ -225,9 +241,7 @@ export default function SupervisorClient() {
             className={`max-w-md w-[92%] sm:w-full rounded-xl shadow-lg px-4 py-3 flex items-start gap-3 animate-fade-in
             ${isSuccessToast ? "bg-emerald-600" : "bg-red-600"}`}
           >
-            <div className="mt-1 text-xl">
-              {isSuccessToast ? "✅" : "⚠️"}
-            </div>
+            <div className="mt-1 text-xl">{isSuccessToast ? "✅" : "⚠️"}</div>
             <div className="flex-1 text-sm text-white">
               <p className="font-semibold mb-1">
                 {isSuccessToast ? "¡Listo!" : "Revisa tu formulario"}
@@ -254,7 +268,9 @@ export default function SupervisorClient() {
       )}
 
       <div className="max-w-xl mx-auto bg-white p-6 rounded-xl shadow">
-        <h1 className="text-2xl font-bold mb-4 text-gray-900">Bitácora diaria</h1>
+        <h1 className="text-2xl font-bold mb-4 text-gray-900">
+          Bitácora diaria
+        </h1>
 
         {loadingInfo && (
           <p className="text-sm text-gray-500 mb-4">
@@ -297,16 +313,32 @@ export default function SupervisorClient() {
             </div>
 
             <div className="mt-4">
-              <label className="text-sm font-medium text-gray-700">Proyecto</label>
-              <input
-                type="text"
-                placeholder={
-                  loadingInfo ? "Cargando..." : info?.proyectoNombre || "—"
-                }
-                value={info?.proyectoNombre || ""}
-                readOnly
-                className="w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-700"
-              />
+              <label className="text-sm font-medium text-gray-700">
+                Proyecto del día
+              </label>
+
+              {proyectos.length === 0 ? (
+                <input
+                  type="text"
+                  readOnly
+                  value="Sin proyectos asignados"
+                  className="w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-500"
+                />
+              ) : (
+                <select
+                  className="w-full border rounded-lg px-3 py-2 text-gray-900"
+                  value={proyectoSeleccionado}
+                  onChange={(e) => setProyectoSeleccionado(e.target.value)}
+                >
+                  <option value="">Selecciona un proyecto</option>
+
+                  {proyectos.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre || "(Proyecto sin nombre)"}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           </div>
 
@@ -529,7 +561,6 @@ export default function SupervisorClient() {
                 Fotos generales, detalles, material y pendientes.
               </p>
 
-              {/* Lista de fotos seleccionadas */}
               {fotos.length > 0 && (
                 <div className="mt-3 grid grid-cols-1 gap-1 text-xs text-gray-700">
                   {fotos.map((file, idx) => (
