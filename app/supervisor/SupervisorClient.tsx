@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { uploadImageToCloudinary } from "@/lib/uploadImage";
 
 type SupervisorInfo = {
   supervisorId: string;
@@ -38,6 +39,13 @@ export default function SupervisorClient() {
 
   const [confirmado, setConfirmado] = useState(false);
 
+  const [areaNivel, setAreaNivel] = useState("");
+  const [m2Cristal, setM2Cristal] = useState("");
+  const [m2Aluminio, setM2Aluminio] = useState("");
+  const [mlSelloInterior, setMlSelloInterior] = useState("");
+  const [mlSelloExterior, setMlSelloExterior] = useState("");
+  const [puertasColocadas, setPuertasColocadas] = useState("");
+
   // Toast & errores
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -45,12 +53,12 @@ export default function SupervisorClient() {
 
   const [submitting, setSubmitting] = useState(false);
 
-  // Fotos seleccionadas
+  // Fotos seleccionadas en el input
   const [fotos, setFotos] = useState<File[]>([]);
 
   const supervisorId = searchParams.get("user");
 
-  // Helpers para toasts
+  /* Helpers de toast */
   const showErrorToast = (errors: string[]) => {
     setSuccessMessage(null);
     setFormErrors(errors);
@@ -77,7 +85,7 @@ export default function SupervisorClient() {
     setSuccessMessage(null);
   };
 
-  // Cargar info del supervisor por URL (?user=recXXXX)
+  /* Cargar info del supervisor + proyectos */
   useEffect(() => {
     const loadInfo = async () => {
       if (!supervisorId) {
@@ -104,11 +112,12 @@ export default function SupervisorClient() {
         const listaProyectos: ProyectoItem[] = data.proyectos || [];
         setProyectos(listaProyectos);
 
-        // Si solo tiene un proyecto asignado, lo preseleccionamos
+        // Si solo tiene un proyecto, lo preseleccionamos
         if (listaProyectos.length === 1) {
           setProyectoSeleccionado(listaProyectos[0].id);
         }
-      } catch {
+      } catch (e) {
+        console.error(e);
         router.replace("/");
       } finally {
         setLoadingInfo(false);
@@ -118,7 +127,7 @@ export default function SupervisorClient() {
     loadInfo();
   }, [supervisorId, router]);
 
-  // Helper para checkboxes de actividades
+  /* Checkboxes de actividades */
   const toggleActividad = (nombre: string) => {
     setActividades((prev) =>
       prev.includes(nombre)
@@ -127,7 +136,7 @@ export default function SupervisorClient() {
     );
   };
 
-  // Manejo de selección de fotos
+  /* Manejo de selección de fotos */
   const handleFotosChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const filesArray = Array.from(e.target.files || []);
 
@@ -144,7 +153,7 @@ export default function SupervisorClient() {
     }
   };
 
-  // Validación + envío
+  /* Envío del formulario */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const errors: string[] = [];
@@ -174,8 +183,29 @@ export default function SupervisorClient() {
       return;
     }
 
+    setSubmitting(true);
+
+    /* 1) Subir fotos a Cloudinary (si hay) */
+    let evidenciaFotos: string[] = [];
+
     try {
-      setSubmitting(true);
+      if (fotos.length > 0) {
+        const uploads = await Promise.all(
+          fotos.map((file) => uploadImageToCloudinary(file))
+        );
+        evidenciaFotos = uploads;
+      }
+    } catch (err) {
+      console.error("Error subiendo fotos:", err);
+      setSubmitting(false);
+      showErrorToast([
+        "Ocurrió un error al subir las fotos. Intenta de nuevo.",
+      ]);
+      return;
+    }
+
+    /* 2) Enviar reporte a nuestra API */
+    try {
       const res = await fetch("/api/reportes", {
         method: "POST",
         headers: {
@@ -194,20 +224,40 @@ export default function SupervisorClient() {
           pendienteOtro,
           supervisorId: info?.supervisorId || null,
           proyectoId: proyectos.length > 0 ? proyectoSeleccionado : null,
+          evidenciaFotos, // <- URLs de Cloudinary
+          areaNivel,
+          m2Cristal,
+          m2Aluminio,
+          mlSelloInterior,
+          mlSelloExterior,
+          puertasColocadas,
         }),
       });
 
-      const data = await res.json();
+      // 👇 Lectura segura de la respuesta (evita el error de JSON vacío)
+      let data: any = null;
+      let rawText: string | null = null;
 
-      if (!res.ok || !data.ok) {
+      try {
+        rawText = await res.text(); // leemos como texto
+        data = rawText ? JSON.parse(rawText) : null; // si viene vacío, data = null
+      } catch (err) {
+        console.error(
+          "La respuesta de /api/reportes NO es JSON válido. Texto crudo:",
+          rawText
+        );
+      }
+
+      if (!res.ok || !data || data.ok === false) {
         console.error("Error API:", data);
         showErrorToast([
-          "Ocurrió un error al enviar el reporte. Intenta de nuevo.",
+          data?.error ||
+            "Ocurrió un error al enviar el reporte. Intenta de nuevo.",
         ]);
         return;
       }
 
-      // Éxito: dejamos seleccionado el proyecto (para el siguiente día)
+      // Reset del formulario (menos el proyecto seleccionado)
       setFecha("");
       setActividades([]);
       setM2Instalados("");
@@ -234,7 +284,7 @@ export default function SupervisorClient() {
 
   return (
     <div className="min-h-screen bg-gray-100 p-6 text-gray-900">
-      {/* TOAST PRO (abajo centrado) */}
+      {/* TOAST inferior */}
       {toastVisible && (successMessage || formErrors.length > 0) && (
         <div className="fixed inset-x-0 bottom-4 flex justify-center z-50">
           <div
@@ -331,7 +381,6 @@ export default function SupervisorClient() {
                   onChange={(e) => setProyectoSeleccionado(e.target.value)}
                 >
                   <option value="">Selecciona un proyecto</option>
-
                   {proyectos.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.nombre || "(Proyecto sin nombre)"}
@@ -339,6 +388,19 @@ export default function SupervisorClient() {
                   ))}
                 </select>
               )}
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-sm font-medium text-slate-700">
+                Área o nivel
+              </label>
+              <input
+                type="text"
+                value={areaNivel}
+                onChange={(e) => setAreaNivel(e.target.value)}
+                placeholder="Ej. Nivel 5, Fachada norte..."
+                className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+              />
             </div>
           </div>
 
@@ -425,50 +487,67 @@ export default function SupervisorClient() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium text-gray-700">
-                  m² instalados
+                <label className="block text-xs text-slate-600 mb-1">
+                  m² de cristal
                 </label>
                 <input
                   type="number"
-                  className="w-full border rounded-lg px-3 py-2 text-gray-900"
-                  value={m2Instalados}
-                  onChange={(e) => setM2Instalados(e.target.value)}
+                  min={0}
+                  value={m2Cristal}
+                  onChange={(e) => setM2Cristal(e.target.value)}
+                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
                 />
               </div>
 
               <div>
-                <label className="text-sm font-medium text-gray-700">
-                  Piezas colocadas
+                <label className="block text-xs text-slate-600 mb-1">
+                  m² de aluminio
                 </label>
                 <input
                   type="number"
-                  className="w-full border rounded-lg px-3 py-2 text-gray-900"
-                  value={piezasColocadas}
-                  onChange={(e) => setPiezasColocadas(e.target.value)}
+                  min={0}
+                  value={m2Aluminio}
+                  onChange={(e) => setM2Aluminio(e.target.value)}
+                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
                 />
               </div>
 
               <div>
-                <label className="text-sm font-medium text-gray-700">
-                  Sellos ejecutados
+                <label className="block text-xs text-slate-600 mb-1">
+                  ML de sello interior
                 </label>
                 <input
                   type="number"
-                  className="w-full border rounded-lg px-3 py-2 text-gray-900"
-                  value={sellosEjecutados}
-                  onChange={(e) => setSellosEjecutados(e.target.value)}
+                  min={0}
+                  value={mlSelloInterior}
+                  onChange={(e) => setMlSelloInterior(e.target.value)}
+                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
                 />
               </div>
 
               <div>
-                <label className="text-sm font-medium text-gray-700">
-                  Postes ajustados
+                <label className="block text-xs text-slate-600 mb-1">
+                  ML de sello exterior
                 </label>
                 <input
                   type="number"
-                  className="w-full border rounded-lg px-3 py-2 text-gray-900"
-                  value={postesAjustados}
-                  onChange={(e) => setPostesAjustados(e.target.value)}
+                  min={0}
+                  value={mlSelloExterior}
+                  onChange={(e) => setMlSelloExterior(e.target.value)}
+                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">
+                  Cantidad de puertas colocadas
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={puertasColocadas}
+                  onChange={(e) => setPuertasColocadas(e.target.value)}
+                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
                 />
               </div>
             </div>

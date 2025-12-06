@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
 
-const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY!;
-const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID!;
-const TABLE_REPORTES =
-  process.env.AIRTABLE_TABLE_REPORTES || "Reportes Diarios";
+const API_KEY = process.env.AIRTABLE_API_KEY!;
+const BASE_ID = process.env.AIRTABLE_BASE_ID!;
+const TABLE = process.env.AIRTABLE_TABLE_REPORTES || "Reportes Diarios";
 
-// Nombres EXACTOS de campos en "Reportes Diarios"
+const API_URL = `https://api.airtable.com/v0/${BASE_ID}/${encodeURIComponent(
+  TABLE
+)}`;
+
+// Nombres de campos EXACTOS en Airtable
 const FIELD_FECHA = "Fecha";
-const FIELD_SUPERVISOR_LINK = "Supervisores"; // link a Supervisores
-const FIELD_PROYECTO_LINK = "Proyecto";       // link a Proyectos
-const FIELD_CONFIRMADO = "Confirmado por supervisor";
+const FIELD_SUPERVISOR = "Supervisores";
+const FIELD_PROYECTO = "Proyectos";
 
 const FIELD_FABRICACION = "Fabricación – actividades";
 const FIELD_INSTALACION = "Instalación – actividades";
@@ -25,207 +27,290 @@ const FIELD_TIEMPO_MUERTO_OTRO = "Tiempo muerto – otro";
 const FIELD_PENDIENTE = "Pendiente";
 const FIELD_PENDIENTE_OTRO = "Pendiente – otro";
 
-type ReportePayload = {
-  fecha: string;
-  actividades: string[];
-  m2Instalados?: string;
-  piezasColocadas?: string;
-  sellosEjecutados?: string;
-  postesAjustados?: string;
-  tiempoMuerto?: string;
-  tiempoMuertoOtro?: string;
-  pendiente?: string;
-  pendienteOtro?: string;
-  supervisorId: string | null;
-  proyectoId?: string | null;
-};
+const FIELD_FOTOS = "Fotos";
 
-/* ------------------ POST: crear reporte ------------------ */
+const FIELD_AREA_NIVEL = "Área o nivel";
+const FIELD_M2_CRISTAL = "m² cristal";
+const FIELD_M2_ALUMINIO = "m² aluminio";
+const FIELD_ML_SELLO_INTERIOR = "ML sello interior";
+const FIELD_ML_SELLO_EXTERIOR = "ML sello exterior";
+const FIELD_PUERTAS_COLOCADAS = "Puertas colocadas";
 
-export async function POST(req: Request) {
+// Checkbox de confirmación
+const FIELD_CONFIRMADO = "Confirmado por supervisor";
+
+// Pequeña ayuda para detectar IDs tipo recXXXXXXXX
+function looksLikeRecordId(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return value.startsWith("rec");
+}
+
+// --------------------------------------------------
+// GET: listar reportes para el panel de admin
+// --------------------------------------------------
+export async function GET(req: Request) {
   try {
-    const body = (await req.json()) as ReportePayload;
+    const { searchParams } = new URL(req.url);
+    const limitParam = searchParams.get("limit");
+    const limit = limitParam
+      ? Math.min(100, Math.max(1, Number(limitParam)))
+      : 50;
 
-    // Validación mínima
-    if (!body.fecha || !body.supervisorId) {
+    const url = `${API_URL}?pageSize=${limit}&sort[0][field]=${encodeURIComponent(
+      FIELD_FECHA
+    )}&sort[0][direction]=desc`;
+
+    const airtableRes = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      cache: "no-store",
+    });
+
+    const airtableData = await airtableRes.json();
+
+    if (!airtableRes.ok) {
+      console.error("Airtable GET error:", airtableData);
       return NextResponse.json(
-        { ok: false, error: "Faltan datos obligatorios en el payload." },
-        { status: 400 }
-      );
-    }
-
-    // Listas para separar actividades según bloque
-    const fabricacion = [
-      "Habilitado",
-      "Corte",
-      "Armado",
-      "Ensamble",
-      "Limpieza de piezas",
-    ];
-    const instalacion = [
-      "Colocación de aluminio",
-      "Colocación de vidrio",
-      "Ajuste de postes",
-      "Sellos interior",
-      "Sellos exterior",
-      "Accesorios",
-      "Limpieza",
-    ];
-    const supervision = [
-      "Revisión de calidad",
-      "Validación de metrado",
-      "Coordinación con contratista",
-      "Revisión de avances",
-    ];
-
-    const fabricacionSel = body.actividades.filter((a) =>
-      fabricacion.includes(a)
-    );
-    const instalacionSel = body.actividades.filter((a) =>
-      instalacion.includes(a)
-    );
-    const supervisionSel = body.actividades.filter((a) =>
-      supervision.includes(a)
-    );
-
-    const fields: Record<string, any> = {
-      [FIELD_FECHA]: body.fecha,
-      [FIELD_SUPERVISOR_LINK]: [body.supervisorId],
-      [FIELD_CONFIRMADO]: true,
-    };
-
-    if (body.proyectoId) {
-      fields[FIELD_PROYECTO_LINK] = [body.proyectoId];
-    }
-
-    if (fabricacionSel.length) {
-      fields[FIELD_FABRICACION] = fabricacionSel;
-    }
-    if (instalacionSel.length) {
-      fields[FIELD_INSTALACION] = instalacionSel;
-    }
-    if (supervisionSel.length) {
-      fields[FIELD_SUPERVISION] = supervisionSel;
-    }
-
-    if (body.m2Instalados) {
-      fields[FIELD_M2] = Number(body.m2Instalados);
-    }
-    if (body.piezasColocadas) {
-      fields[FIELD_PIEZAS] = Number(body.piezasColocadas);
-    }
-    if (body.sellosEjecutados) {
-      fields[FIELD_SELLOS] = Number(body.sellosEjecutados);
-    }
-    if (body.postesAjustados) {
-      fields[FIELD_POSTES] = Number(body.postesAjustados);
-    }
-
-    if (body.tiempoMuerto) {
-      fields[FIELD_TIEMPO_MUERTO] = body.tiempoMuerto;
-    }
-    if (body.tiempoMuertoOtro) {
-      fields[FIELD_TIEMPO_MUERTO_OTRO] = body.tiempoMuertoOtro;
-    }
-    if (body.pendiente) {
-      fields[FIELD_PENDIENTE] = body.pendiente;
-    }
-    if (body.pendienteOtro) {
-      fields[FIELD_PENDIENTE_OTRO] = body.pendienteOtro;
-    }
-
-    const res = await fetch(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(
-        TABLE_REPORTES
-      )}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${AIRTABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ fields }),
-      }
-    );
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      console.error("Airtable error:", data);
-      return NextResponse.json(
-        { ok: false, error: "Error al guardar en Airtable." },
+        { ok: false, error: "Error al cargar reportes desde Airtable." },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ ok: true, recordId: data.id });
-  } catch (error: any) {
-    console.error(error);
+    const records =
+      (airtableData.records || []).map((rec: any) => {
+        const f = rec.fields || {};
+
+        const rawProyectos = f[FIELD_PROYECTO];
+
+        // -----------------------------
+        // Buscar dinámicamente el campo
+        // cuyo nombre comience con
+        // "Nombre del proyecto"
+        // -----------------------------
+        const fieldNames = Object.keys(f);
+        const lookupKey = fieldNames.find((name) =>
+          name.startsWith("Nombre del proyecto")
+        );
+
+        const rawLookup = lookupKey ? f[lookupKey] : undefined;
+
+        let proyectoNombre: string | null = null;
+
+        // 1) Intentar con el lookup encontrado
+        if (Array.isArray(rawLookup) && rawLookup.length > 0) {
+          proyectoNombre = String(rawLookup[0]);
+        } else if (typeof rawLookup === "string") {
+          proyectoNombre = rawLookup;
+        }
+
+        // 2) Si el lookup está vacío, usamos Proyectos (lo que devuelva Airtable)
+        if (!proyectoNombre) {
+          if (Array.isArray(rawProyectos) && rawProyectos.length > 0) {
+            proyectoNombre = String(rawProyectos[0]);
+          } else if (typeof rawProyectos === "string") {
+            proyectoNombre = rawProyectos;
+          }
+        }
+
+        // 3) Si parece un recId y tenemos otra cosa más "humana", la usamos
+        const proyectosTexto =
+          Array.isArray(rawProyectos) && rawProyectos.length > 0
+            ? String(rawProyectos[0])
+            : typeof rawProyectos === "string"
+            ? rawProyectos
+            : null;
+
+        if (
+          looksLikeRecordId(proyectoNombre) &&
+          proyectosTexto &&
+          !looksLikeRecordId(proyectosTexto)
+        ) {
+          proyectoNombre = proyectosTexto;
+        }
+
+        // Normalizar proyectos a array de strings (IDs)
+        const proyectosNorm: string[] = Array.isArray(rawProyectos)
+          ? (rawProyectos as string[])
+          : rawProyectos
+          ? [String(rawProyectos)]
+          : [];
+
+        return {
+          id: rec.id,
+          fecha: f[FIELD_FECHA] ?? null,
+          supervisores: (f[FIELD_SUPERVISOR] as string[]) || [],
+          confirmado: Boolean(f[FIELD_CONFIRMADO]),
+
+          proyectos: proyectosNorm,
+          proyectoNombre,
+
+          fabricacion: (f[FIELD_FABRICACION] as string[]) || [],
+          instalacion: (f[FIELD_INSTALACION] as string[]) || [],
+          supervision: (f[FIELD_SUPERVISION] as string[]) || [],
+
+          m2Instalados: f[FIELD_M2] ?? null,
+          piezasColocadas: f[FIELD_PIEZAS] ?? null,
+          sellosEjecutados: f[FIELD_SELLOS] ?? null,
+          postesAjustados: f[FIELD_POSTES] ?? null,
+
+          tiempoMuerto: f[FIELD_TIEMPO_MUERTO] ?? null,
+          tiempoMuertoOtro: f[FIELD_TIEMPO_MUERTO_OTRO] ?? null,
+
+          areaNivel: f[FIELD_AREA_NIVEL] ?? null,
+          m2Cristal: f[FIELD_M2_CRISTAL] ?? null,
+          m2Aluminio: f[FIELD_M2_ALUMINIO] ?? null,
+          mlSelloInterior: f[FIELD_ML_SELLO_INTERIOR] ?? null,
+          mlSelloExterior: f[FIELD_ML_SELLO_EXTERIOR] ?? null,
+          puertasColocadas: f[FIELD_PUERTAS_COLOCADAS] ?? null,
+
+          pendiente: f[FIELD_PENDIENTE] ?? null,
+          pendienteOtro: f[FIELD_PENDIENTE_OTRO] ?? null,
+
+          fotos: Array.isArray(f[FIELD_FOTOS])
+            ? (f[FIELD_FOTOS] as any[]).map((att) => ({ url: att.url }))
+            : [],
+        };
+      }) ?? [];
+
+    return NextResponse.json({ ok: true, records }, { status: 200 });
+  } catch (error) {
+    console.error("[GET /api/reportes] Error:", error);
     return NextResponse.json(
-      { ok: false, error: error.message },
+      { ok: false, error: "Error cargando reportes." },
       { status: 500 }
     );
   }
 }
 
-/* ------------------ GET: listar reportes para admin ------------------ */
-
-export async function GET(req: Request) {
+// --------------------------------------------------
+// POST: crear reporte desde el formulario del supervisor
+// --------------------------------------------------
+export async function POST(req: Request) {
   try {
-    const url = new URL(req.url);
-    const limit = Number(url.searchParams.get("limit") || "50");
+    const body = await req.json();
 
-    const airtableUrl = new URL(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(
-        TABLE_REPORTES
-      )}`
-    );
-    airtableUrl.searchParams.set("pageSize", String(limit));
-    airtableUrl.searchParams.set("sort[0][field]", FIELD_FECHA);
-    airtableUrl.searchParams.set("sort[0][direction]", "desc");
+    const {
+      fecha,
+      fabricacion = [],
+      instalacion = [],
+      supervision = [],
+      m2Instalados,
+      piezasColocadas,
+      sellosEjecutados,
+      postesAjustados,
+      tiempoMuerto,
+      tiempoMuertoOtro,
+      pendiente,
+      pendienteOtro,
+      supervisorId,
+      proyectoId,
+      evidenciaFotos,
+      areaNivel,
+      m2Cristal,
+      m2Aluminio,
+      mlSelloInterior,
+      mlSelloExterior,
+      puertasColocadas,
+    } = body as {
+      fecha: string;
+      fabricacion?: string[];
+      instalacion?: string[];
+      supervision?: string[];
+      m2Instalados?: string | number | null;
+      piezasColocadas?: string | number | null;
+      sellosEjecutados?: string | number | null;
+      postesAjustados?: string | number | null;
+      tiempoMuerto?: string | null;
+      tiempoMuertoOtro?: string | null;
+      pendiente?: string | null;
+      pendienteOtro?: string | null;
+      supervisorId?: string | null;
+      proyectoId?: string | null;
+      evidenciaFotos?: string[];
+      areaNivel?: string | null;
+      m2Cristal?: string | number | null;
+      m2Aluminio?: string | number | null;
+      mlSelloInterior?: string | number | null;
+      mlSelloExterior?: string | number | null;
+      puertasColocadas?: string | number | null;
+    };
 
-    const res = await fetch(airtableUrl.toString(), {
+    const attachments =
+      (evidenciaFotos || []).map((url: string) => ({ url })) ?? [];
+
+    const fields: Record<string, any> = {};
+
+    if (fecha) fields[FIELD_FECHA] = fecha;
+    if (supervisorId) fields[FIELD_SUPERVISOR] = [supervisorId];
+    if (proyectoId) fields[FIELD_PROYECTO] = [proyectoId];
+
+    fields[FIELD_FABRICACION] = fabricacion;
+    fields[FIELD_INSTALACION] = instalacion;
+    fields[FIELD_SUPERVISION] = supervision;
+
+    if (m2Instalados) fields[FIELD_M2] = Number(m2Instalados);
+    if (piezasColocadas) fields[FIELD_PIEZAS] = Number(piezasColocadas);
+    if (sellosEjecutados) fields[FIELD_SELLOS] = Number(sellosEjecutados);
+    if (postesAjustados) fields[FIELD_POSTES] = Number(postesAjustados);
+
+    if (tiempoMuerto) fields[FIELD_TIEMPO_MUERTO] = tiempoMuerto;
+    if (tiempoMuertoOtro) fields[FIELD_TIEMPO_MUERTO_OTRO] = tiempoMuertoOtro;
+    if (pendiente) fields[FIELD_PENDIENTE] = pendiente;
+    if (pendienteOtro) fields[FIELD_PENDIENTE_OTRO] = pendienteOtro;
+
+    if (attachments.length > 0) {
+      fields[FIELD_FOTOS] = attachments;
+    }
+
+    if (areaNivel) fields[FIELD_AREA_NIVEL] = areaNivel;
+    if (m2Cristal) fields[FIELD_M2_CRISTAL] = Number(m2Cristal);
+    if (m2Aluminio) fields[FIELD_M2_ALUMINIO] = Number(m2Aluminio);
+    if (mlSelloInterior)
+      fields[FIELD_ML_SELLO_INTERIOR] = Number(mlSelloInterior);
+    if (mlSelloExterior)
+      fields[FIELD_ML_SELLO_EXTERIOR] = Number(mlSelloExterior);
+    if (puertasColocadas)
+      fields[FIELD_PUERTAS_COLOCADAS] = Number(puertasColocadas);
+
+    const airtablePayload = {
+      records: [{ fields }],
+    };
+
+    const airtableRes = await fetch(API_URL, {
+      method: "POST",
       headers: {
-        Authorization: `Bearer ${AIRTABLE_API_KEY}`,
+        Authorization: `Bearer ${API_KEY}`,
+        "Content-Type": "application/json",
       },
-      cache: "no-store",
+      body: JSON.stringify(airtablePayload),
     });
 
-    const data = await res.json();
+    const airtableData = await airtableRes.json();
 
-    if (!res.ok) {
-      console.error("Airtable error (GET reportes):", data);
+    if (!airtableRes.ok) {
+      console.error("Airtable POST error:", airtableData);
       return NextResponse.json(
-        { ok: false, error: "Error al leer reportes desde Airtable." },
+        {
+          ok: false,
+          error: "Error al guardar en Airtable.",
+          details: airtableData,
+        },
         { status: 500 }
       );
     }
 
-    const records = (data.records || []).map((r: any) => ({
-      id: r.id,
-      fecha: r.fields[FIELD_FECHA] || null,
-      supervisores: r.fields[FIELD_SUPERVISOR_LINK] || [],
-      proyectos: r.fields[FIELD_PROYECTO_LINK] || [], // por si luego quieres usarlo
-      confirmado: !!r.fields[FIELD_CONFIRMADO],
-      fabricacion: r.fields[FIELD_FABRICACION] || [],
-      instalacion: r.fields[FIELD_INSTALACION] || [],
-      supervision: r.fields[FIELD_SUPERVISION] || [],
-      m2Instalados: r.fields[FIELD_M2] ?? null,
-      piezasColocadas: r.fields[FIELD_PIEZAS] ?? null,
-      sellosEjecutados: r.fields[FIELD_SELLOS] ?? null,
-      postesAjustados: r.fields[FIELD_POSTES] ?? null,
-      tiempoMuerto: r.fields[FIELD_TIEMPO_MUERTO] || null,
-      tiempoMuertoOtro: r.fields[FIELD_TIEMPO_MUERTO_OTRO] || null,
-      pendiente: r.fields[FIELD_PENDIENTE] || null,
-      pendienteOtro: r.fields[FIELD_PENDIENTE_OTRO] || null,
-      rawFields: r.fields,
-    }));
-
-    return NextResponse.json({ ok: true, records });
-  } catch (error: any) {
-    console.error(error);
     return NextResponse.json(
-      { ok: false, error: error.message },
+      {
+        ok: true,
+        record: airtableData.records?.[0] ?? null,
+      },
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error("[POST /api/reportes] Error:", error);
+    return NextResponse.json(
+      { ok: false, error: "Error interno al guardar la bitácora." },
       { status: 500 }
     );
   }
